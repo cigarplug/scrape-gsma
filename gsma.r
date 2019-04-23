@@ -297,3 +297,22 @@ loop_the_loop <- function(filter_for_assignment = F) {
 
 gsm_df <- loop_the_loop()
 
+
+
+ll <- readLines("~/Downloads/gsm.json") %>% fromJSON()
+
+long_to_wide <- function(df){
+  as.data.frame(t(df$val)) %>% 
+    `colnames<-`(paste0(df$type, "_", df$sub_type) %>% 
+                   str_trim(side = "both"))
+}
+
+gsm <- ll$devices %>% flatten() %>% map(long_to_wide) %>% bind_rows()
+
+
+# remove trailing underscores from col names, replace spaces with underscores, lowercase col names
+
+colnames(gsm) <- colnames(gsm) %>% str_replace( "_\\Z", "") %>% 
+  str_replace_all(" ", "_") %>%  str_trim() %>% tolower()
+
+write.csv(gsm, "gsm.csv", na = "", row.names = F)
