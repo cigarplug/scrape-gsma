@@ -1,18 +1,28 @@
+
+
+
+
 ## scraping gsmarena website ##
+
 
 library(rvest)
 library(dplyr)
 library(magrittr)
-library(RMySQL)
+library(htmltab)
+library(purrr)
+library(jsonlite)
+library(stringr)
+
+# setwd("S2/viz/ass3/")
 
 options(stringsAsFactors = F)
 
 
 build_oem_table <- function(...){
-
-  sesh <- html_session("https://www.gsmarena.com/makers.php3") ; Sys.sleep(3)
+  
+  sesh <- html_session("https://www.gsmarena.com/makers.php3") 
   makers <- read_html(sesh)
-    
+  
   maker_nodes <- makers %>% html_nodes(".st-text a") 
   
   maker_names <- maker_nodes %>% html_text()
@@ -30,42 +40,48 @@ build_oem_table <- function(...){
   return(oem_table)
 }
 
-oem_table <- build_oem_table()
+# oem_table <- build_oem_table()
 
 parse_resource_locator <- function(location){
   paste0("https://www.gsmarena.com/", location)
 }
 
 
+
+
 oem_urls <- function(oem_base_url){
   src <- read_html(oem_base_url); Sys.sleep(3)
+  
   items <- src %>% html_nodes(".nav-pages strong , .nav-pages a") %>% html_text()
   
-  if(length(items) != 0){
-    page_range <- seq(as.numeric(items[1]), as.numeric(items[length(items)]), 1)
+  if (length(items) != 0){
+    page_range <- 1:(items[length(items)] %>% as.numeric())
     
-    ## first part of url i.e, oem name (this regex doesn't work where oems have numbers in their names, e.g O2)
-    p1 <- stringr::str_match(oem_base_url, "(.*?)\\d+-")[2] 
+    maker_id <- stringr::str_match(oem_base_url, "https://www.gsmarena.com/(.*?)-phones-")[2]
+    maker_indx <- stringr::str_match(oem_base_url, ".*-phones-(.*?).php")[2]
     
-    ## second part of url i.e, gsmArena's internal index
-    p2 <- stringr::str_match(oem_base_url, "\\d+") [1]
-    
-    purrr::map_chr(page_range, function(x){paste0( p1, "f-", p2, "-0-p", x, ".php")})
-      
+    map_chr(page_range, 
+            function(pg_count) {
+              paste0("https://www.gsmarena.com/", maker_id, "-phones-f-",
+                     maker_indx, "-0-p", pg_count, ".php"
+              )
+            }
+    )
   } else {
     oem_base_url
   }
   
+  
 }
 
-
+# oem_urls("https://www.gsmarena.com/samsung-phones-9.php")
 
 
 listed_devices <- function(page_url){
   
-  src <- read_html(page_url); Sys.sleep(3)
+  src <- read_html(page_url)
   nodes <- src %>% html_nodes("#review-body a") 
-
+  
   devices <- nodes %>% html_text()
   devices_url <- nodes %>% html_attr('href')
   
@@ -73,144 +89,211 @@ listed_devices <- function(page_url){
 }
 
 
-scrape_df <- function(device_url){
-  
-  src <- read_html(device_url); Sys.sleep(1)
-  
-  # title column
-  c.title <- src %>% html_nodes(".ttl") %>% html_text()
-  
-  # values column
-  c.values <- src %>% html_nodes(".nfo") %>% html_text()
-  
-  tmp <- data.frame(cbind(var = c.title, val =  c.values))
-  
-  dimensions <- strsplit(tmp[tmp$var == 'Dimensions', "val"] %>% stringr::str_extract(".*mm") %>% gsub(" mm", "", .), split = " x ") %>% unlist() %>% as.numeric()
-  ram <- stringr::str_extract(tmp$val[tmp$var == 'Internal'], "\\d+ (GB|MB) RAM")
-  
-  
-  
-  l <- c(tech = tmp[tmp$var == 'Technology', 'val'],
-            announced = tmp[tmp$var == 'Announced', "val"],
-            status = tmp[tmp$var == 'Status', "val"],
-            dim_length = dimensions[1],
-            dim_breadth = dimensions[2],
-            dim_thickness = dimensions[3],
-            weight = tmp$val[tmp$var == 'Weight'] %>% stringr::str_extract(".* g") %>% gsub(" g", "", .) %>% as.numeric(),
-            sim = tmp$val[tmp$var == "SIM"],
-            display_tech = tmp$val[tmp$var == 'Type'],
-            display_size = tmp$val[tmp$var == 'Size'] %>% stringr::str_extract("(.*)inches") %>% gsub(" inches", " ", .) %>% as.numeric(),
-            display_res = tmp$val[tmp$var == "Resolution"] %>% stringr::str_extract(".*x.*pixel") %>% gsub(" pixel", "", .),
-            aspect_ratio = tmp$val[tmp$var == "Resolution"] %>% stringr::str_extract("\\d+(\\.\\d+)?\\:\\d+(\\.\\d+)?"),
-            ip_certification = tmp$val[grep("IP\\d+ cert", tmp$val)] %>% stringr::str_extract("IP\\d+"),
-            os = tmp$val[tmp$var == "OS"],
-            chipset = tmp$val[tmp$var == "Chipset"],
-            cpu = tmp$val[tmp$var == "CPU"],
-            gpu = tmp$val[tmp$var == "GPU"],
-            card_slot = tmp$val[tmp$var == "Card slot"] %>% stringr::str_extract("Yes|No|microSD"),
-            ram = ifelse(isTRUE(isTRUE(grepl("MB", ram))), (gsub(" (GB|MB) RAM", "", ram) %>% as.numeric())/1024, gsub(" (GB|MB) RAM", "", ram) %>% as.numeric()),
-            bt_v = tmp$val[tmp$var == "Bluetooth"] %>% stringr::str_extract("\\d+(.\\d+)?|No|NO|no") %>% as.numeric(),
-            gps = tmp$val[tmp$var == "GPS"] %>% gsub(pattern = "(?<=yes|no).*", replacement = "", ignore.case = T, x = ., perl = T),
-            radio = tmp$val[tmp$var == "Radio"] %>% gsub(pattern = "(?<=yes|no|fm radio).*", replacement = "", ignore.case = T, x = ., perl = T),
-            nfc = tmp$val[tmp$var == "NFC"] %>% gsub(pattern = "(?<=yes|no).*", replacement = "", ignore.case = T, x = ., perl = T),
-            wlan = tmp$val[tmp$var == "WLAN"] %>% gsub(pattern = "(?<=yes|no|wi-fi|wifi).*", replacement = "", ignore.case = T, x = ., perl = T),
-            battery_mah = tmp$val[grep("mah", tmp$val, ignore.case = T)]%>%.[1] %>% stringr::str_extract("\\d+ mAh") %>% gsub(" mah", "", ., ignore.case = T) %>% as.numeric(),
-            audio_jack = tmp$val[grep("3.5mm jack", tmp$var, ignore.case = T)],
-            price = tmp$val[tmp$var == "Price"] %>% stringr::str_extract("\\d+") %>% as.numeric(),
-            camera = tmp$val[tmp$var == "Primary"],
-            video = tmp$val[tmp$var == "Video"],
-            selfie = tmp$val[tmp$var == "Secondary"]
-            
-            )
-  
-  
-  
-  # reason for creating a list first rather than directly a dataframe being that lists are seemingly more
-  # flexible while creation. 0L objects like character(0) can be inserted in lists, but doing the same 
-  # with a dataframe throws error
-  
-  ## convert list to data frame, courtesy stackoverflow ##
-  
-
-  return(as.data.frame(t(l)))
-} 
-
-## testing lalala ##
-
-tmp <- scrape_df("https://www.gsmarena.com/motorola_moto_g5-8454.php")
 
 
-db.con <- dbConnect(RMySQL::MySQL(), host = host, dbname = db, user = user, password = password)
-
-
-
-## let's build a looooop now #
-
-gsmA <- function(){
+scrape_df <- function(url) {
   
-  # oem_table <- build_oem_table()
-  error_log <<- c()
+  src <- read_html(url)
+  n_head <- src %>% html_nodes("th") %>% html_text() %>% length()
   
-  out = tryCatch(
-    {
-     
-      print("oem table has been built. proceeding..")
-      
-      for (i in 1:nrow(oem_table)){
-        i<<- i
-        print(paste0("current oem is: ", oem_table$maker[i]))
-        
-        oem_listings <- parse_resource_locator(oem_table$resource_location[i]) %>% oem_urls()
-        
-        print(paste0(length(oem_listings), " pages found"))
-        
-        for (j in 1:length(oem_listings)){
-          j<<- j
-          
-          devices_on_page <- listed_devices(oem_listings[j])
-          
-          for (k in 1:nrow(devices_on_page)){
-            k<<- k
-            
-            df <- parse_resource_locator(devices_on_page$device_resource[k]) %>% scrape_df()
-            cols <- c('tech', 'announced', 'status', 'dim_length', 'dim_breadth', 'dim_thickness', 'weight', 'sim', 'display_tech', 'display_size', 'display_res', 'aspect_ratio', 'ip_certification', 'os', 'chipset', 'cpu', 'gpu', 'card_slot', 'ram', 'bt_v', 'gps', 'radio', 'nfc', 'wlan', 'battery_mah', 'audio_jack', 'price', 'camera', 'video', 'selfie')
-            
-            missing_cols <- cols[!cols %in% colnames(df)]
-            
-            if(length(missing_cols) != 0){
-              missing_cols_df <- matrix(ncol = length(missing_cols)) %>% as.data.frame() %>% `colnames<-`(missing_cols)          
-              df <- cbind(df, missing_cols_df)
-            } 
+  doc <- xml2::download_xml(url)
+  
+  get_head_tbl <- function(head_indx) {
     
-            
-            df <- cbind( df, data.frame(oem = oem_table$maker[i], device = devices_on_page$device_name[k] %>% gsub("'", "", .)))
-            
-            
-            
-            print(paste0("processing device: ", oem_table$maker[i], " ", devices_on_page$device_name[k]))
-            
-            q <- paste0("insert into devices (", paste0(colnames(df), collapse = ", "), ") values (",
-                        paste0("'", df[1,], "'", collapse = ", "), ")"
-            )
-            
-            dbGetQuery(db.con, q)
-          }
-        }
+    out = tryCatch(
+      {
+        suppressMessages(htmltab(doc, which = head_indx ) %>% 
+                           as.data.frame() %>% 
+                           rbind(colnames(.), .) %>% 
+                           `colnames<-`(c("type", "sub_type", "val")))
+      },
+      
+      error = function(e){
+        xp <- '//th | //*[contains(concat( " ", @class, " " ), concat( " ", "ttl", " " ))]//*[contains(concat( " ", @class, " " ), concat( " ", "nfo", " " ))]'
+        print(paste("Fetching chunk", head_indx, "of", n_head))
+        
+        suppressMessages(htmltab(url, which = head_indx, body = xp ) %>% 
+                           as.data.frame() %>% 
+                           rbind(colnames(.), .) %>% 
+                           `colnames<-`(c("type", "sub_type", "val")))
       }
-       
-    },
+    )
     
-    error = function(cond){
-    message('error encountered')
-     error_log <<- c(error_log, devices_on_page$device_resource[k]) 
-    }
+    out
     
-    
-      
-  )
+  }
   
+  df <- map(1:n_head, get_head_tbl) %>% bind_rows()
   
-  
+  system("rm *.php")
+  df
   
 }
-gsmA()
+
+
+safe_scraper <- safely(scrape_df, otherwise = NULL)
+
+get_os_type <- function(raw_df) {
+  if (nrow(raw_df[raw_df$sub_type == "OS",]) == 0) {
+    return (NA)
+  } else {
+    os_info <- raw_df %>% filter(sub_type == "OS") %>% select(val) %>% 
+      str_split(pattern = ",|;", simplify = T) %>% extract(1)
+    return(os_info)
+  }
+}
+
+get_camera <- function(raw_df) {
+  if (length(raw_df$val[raw_df$type %in% c("Main Camera", "Camera")]) == 0) {
+    return(NA)
+  } else if (raw_df$val[raw_df$type %in% c("Main Camera", "Camera")][1] %in% c("NO", "no", "No")) {
+    return (NA)
+  } else {
+    return(raw_df$sub_type[raw_df$type %in% c("Main Camera", "Camera")][1])
+  }
+}
+
+
+
+df_cols <- function(raw_df) {
+  
+  raw_df$sub_type <- str_trim(raw_df$sub_type, side = "both")
+  
+  dimensions <- strsplit(raw_df %>% filter(sub_type == "Dimensions") %>% select(val) %>% str_extract(".*mm") %>% gsub(" mm", "", .), split = " x ") %>%
+    unlist() %>% as.numeric()
+  
+  ram <- str_extract(raw_df$val[raw_df$sub_type == 'Internal'], "\\d+ (GB|MB) RAM") %>% paste(sep = " ", collapse = " ")
+  ram_gigabytes <- if(grepl("MB", ram, ignore.case = T)){
+    (str_extract(ram, "\\d+") %>% as.numeric())/1024
+  } else {
+    str_extract(ram, "\\d+") %>% as.numeric()
+  }
+  
+  weight <- raw_df$val[raw_df$sub_type == 'Weight'] %>% str_extract(".* g") %>% gsub(" g", "", .) %>% as.numeric()
+  
+  display_size_inches <- raw_df$val[raw_df$sub_type == 'Size'] %>% str_extract("(.*)inches") %>% gsub(" inches", " ", .) %>% as.numeric()
+  
+  display_tech <- raw_df$val[raw_df$sub_type == 'Type'] %>% str_extract(., "[A-Z\\s]{3,}") %>% str_trim(side = "both")
+  
+  display_res <- raw_df$val[raw_df$sub_type == "Resolution"] %>% str_extract(".*x.*pixel") %>% gsub(" pixel", "", .)
+  
+  os <- get_os_type(raw_df)
+  
+  battery_cap <- raw_df %>% filter(type == "Battery", sub_type == "") %>% 
+    select(val) %>% str_extract("\\d+(?= mAh)") %>% as.numeric()
+  
+  price <- safely(raw_df$val[raw_df$sub_type == "Price"], otherwise = NA)
+  price <- price()$result
+  
+  cam <- get_camera(raw_df)
+  
+  audio_jack <- raw_df$val[raw_df$sub_type == "3.5mm jack"]
+  
+  bt_v <- raw_df$val[raw_df$sub_type == "Bluetooth"] %>% str_extract("\\d+(.\\d+)?|No|NO|no") %>% as.numeric()
+  
+  sensors <- raw_df$val[raw_df$sub_type == "Sensors"]
+  
+  announcement <- raw_df$val[raw_df$sub_type == "Announced"]
+  
+  df <- data.frame(
+    announced = announcement,
+    dim_length = dimensions[1],
+    dim_breadth = dimensions[2],
+    dim_thickness = dimensions[3],
+    ram_gb = ram_gigabytes,
+    weight = weight,
+    display_size_inches = display_size_inches,
+    display_tech = display_tech,
+    display_res = display_res,
+    os = os,
+    battery_cap = battery_cap,
+    price = price,
+    camera_type = cam,
+    audio_jack = audio_jack,
+    bluetooth_v = bt_v,
+    sensors = sensors
+  )
+  df
+}
+
+
+
+
+gsm_cols <- c('oem_name', 'device_name', 'announced', 'dim_length','dim_breadth','dim_thickness','ram_gb','weight','display_size_inches','display_tech','display_res','os','battery_cap','price','camera_type','audio_jack','bluetooth_v','sensors')
+init_df <- matrix(data = NA, ncol = 18) %>% as.data.frame() %>% `colnames<-`(gsm_cols)
+ll <- list(devices = list())
+
+safe_df_cols <- safely(df_cols, otherwise = init_df)
+
+
+
+
+loop_the_loop <- function(filter_for_assignment = F) {
+  
+
+  print("building oem table...")
+  
+  oem_table <- build_oem_table()
+  
+  print("oem table built!")
+  
+  for (oem in oem_table$maker[4:nrow(oem_table)] ){
+    print(paste("processing OEM:", oem))
+    
+    oem_listings <- parse_resource_locator(oem_table$resource_location[oem_table$maker == oem]) %>% oem_urls()
+    
+    print(paste("Pages found:", length(oem_listings)))
+    
+    ll$devices[[oem]] <<- list()
+    
+    for (page in oem_listings) {
+      devices_on_page <- listed_devices(page)
+      
+      for (device in devices_on_page$device_name) {
+        
+        print(paste("retrieving data for:", device))
+        
+        out = tryCatch(
+          {
+            gsm_data <- safe_scraper(devices_on_page %>% 
+                                    filter(device_name == device) %>%
+                                    select(device_resource) %>% parse_resource_locator()
+            )
+            
+            if(!is.null(gsm_data$result)){
+              
+              gsm_data <- gsm_data$result
+              tmp_df <- data.frame(type = c("oem", "model"), sub_type = c("", ""), val = c(oem, device))
+              
+              gsm_data <- rbind(tmp_df, gsm_data)
+              
+              ll$devices[[oem]][[device]] <<- gsm_data
+              
+              writeLines(toJSON(ll), "gsm.json")
+              
+              if (isTRUE(filter_for_assignment)) {
+                processed_data <- safe_df_cols(gsm_data)$result
+                
+                device_info <- data.frame(oem_name = oem, device_name = device)
+                
+                init_df <<- bind_rows(init_df, cbind(device_info, processed_data))
+                
+                write.csv(init_df, "gsm.csv", na = "", row.names = F)
+                
+                message("success..! csv written to fs")
+              }
+              
+            }
+ 
+          }
+        )
+      }
+    }
+  }
+  
+  return(ll)
+}
+
+
+gsm_df <- loop_the_loop()
+
