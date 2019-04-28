@@ -425,6 +425,7 @@ finger
 multi_lens
 ```
 
+![Caption for the picture.](~/www/scrape-gsma/igraph.png)
 
 
 ### Reflection
