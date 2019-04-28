@@ -1,0 +1,434 @@
+---
+title: "Data Exploration Project"
+author: "Mohit Sainani"
+date: "April 23, 2019"
+output: pdf_document
+urlcolor: cyan
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = T, warning = F)
+```
+
+```{r, echo=FALSE, message=FALSE}
+library(jsonlite)
+library(dplyr)
+library(purrr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+library(grid)
+```
+
+
+# Prologue
+
+[GSMArena](http://gsmarena.com/) is a gadget review website with a focus on cellular and mobile devices. I believe to have come across the site a long time ago through the now defunct iGoogle start-page. It was among the first few tech blogs among the likes of [How-To Geek](https://www.howtogeek.com/), [XDA Developers](http://xda-developers.com/), [Android Police](http://androidpolice.com/), and [AnandTech](https://www.anandtech.com/) that had invoked in me the sort of enthusiasm for gadgets and devices that I have carried on ever since. 
+
+
+# Introduction
+
+Over the years, GSMArena has compiled a rich database of mobile device specifications. The decision to scrape off their website - despite there being numerous data sets out in the wild to run exploratory analysis upon - was based upon multiple factors. Some of them are:
+
+- an excuse to demonstrate (read : hone, improve) my data mining skills
+- experiment with alternative looping techniques in R using the [purrr](https://cran.r-project.org/package=purrr) library
+- most importantly, the nostalgia attached with working with such a dataset
+
+
+
+You can find the code used for scraping device specifications [here](https://github.com/cigarplug/scrape-gsma) on my GitHub. 
+
+
+# Data Wrangling
+
+This project has been entirely performed in the R (ver 3.5.3) programming language. 
+We start off with reading the exported json file (created after data scrape-ing) and converting it into the familiar row-column structure. Each data frame element from the list is changed into the wide format. After this operation, each row represents specifications of one device.
+
+```{r read_data, warning=FALSE, cache=T}
+
+ll <- readLines("gsm.json") %>% fromJSON()
+
+long_to_wide <- function(df){
+  as.data.frame(t(df$val)) %>% 
+    `colnames<-`(paste0(df$type, "_", df$sub_type) %>% 
+                   str_trim(side = "both"))
+}
+
+gsm <- ll$devices %>% flatten() %>% map_df(long_to_wide) 
+
+```
+
+```{r fix_column_names, echo=F}
+colnames(gsm) <- colnames(gsm) %>% str_replace( "_\\Z", "") %>% 
+  str_replace_all(" ", "_") %>% tolower()
+
+```
+
+The initial dataset comprises of 8980 rows x 86 columns
+
+Comparing this dataset with the GSMArena repository, we find that we managed to capture data for 93.5% (8980  out of 9601) devices listed on the website.
+
+We restrict the dataset to about 24 columns which fall under the scope of the proposed questions.
+
+
+
+```{r helper_fnxs, echo=F}
+
+get_dimensions <- function(x){
+x %>% str_split("x", n = 3) %>% map( ~str_trim(. ,side = "left")) %>%
+  map(~str_extract(., "\\d+(.\\d+)?(?= )")) %>% map(~as.numeric(.)) %>%
+    unlist() %>% paste(., collapse = ",")
+}
+
+get_price <- function(x){
+  x %>% str_replace("About ", "") %>% str_split(" ") %>% unlist() %>% paste(., collapse = ",")
+}
+
+get_ram <- function(x) {
+  ram <- x %>% str_extract("\\d+(.\\d+)? (GB|MB)(?= RAM)")
+  if (grepl("MB", ram, ignore.case = F)){
+    (str_extract(ram, "\\d+") %>% as.numeric())/1024
+  } else {
+    str_extract(ram, "\\d+") %>% as.numeric()
+  }
+}
+
+get_os_type <- function(raw_df) {
+  if (nrow(raw_df[raw_df$sub_type == "OS",]) == 0) {
+    return (NA)
+  } else {
+    os_info <- raw_df %>% filter(sub_type == "OS") %>% select(val) %>% 
+      str_split(pattern = ",|;", simplify = T) %>% extract(1)
+    return(os_info)
+  }
+}
+
+get_android_version <- function(x){
+  x %>% str_extract("Android \\d+(.\\d+)?")
+}
+
+sbr <- function(resolution, length, breadth, display_size){
+  
+  # note: industry standard for reporting display size is the measure of diagonal
+  # phone screens are predominantly rectangular in shape (duh).
+  
+  res <- strsplit(resolution, 'x') %>% unlist() %>% as.numeric()
+  
+  # display size converted to millimeters from inches
+  mm <- 25.4*(display_size) 
+  
+  # using pythagoras theorem and ratio-proportions
+  x <- mm/(1 + (res[2]/res[1])^2)**0.5 
+  
+  screen.body.ratio <- (x*(res[2]/res[1])*x) / (length*breadth)
+  return(screen.body.ratio)
+}
+
+
+safe_sbr <- safely(sbr, otherwise = NA)
+
+
+fix_andr_v <- function(x){
+  if (!is.na(x)){
+    ver <- x %>% str_extract("\\d+(.\\d+)?")
+    if (str_detect(x, "\\.")){
+      x
+    } else {
+      paste0("Android ", ver, ".0")
+    }
+  } else NA
+}
+
+```
+
+
+Next, we'll clean some of the data columns that we know will be required for answering the suggested questions. Regex is used for pattern matching, and the R tidyr and dplyr libraries are used for wrangling purposes. The tasks performed are:
+
+
+1. Device weight in grams  
+    The *body_weight* column is a string which has information in both grams and ounces. We extract the weight in grams and cast it as a numeric value
+
+
+
+
+2. Body dimensioms  
+    Extract the length, breadth, and width (in millimeters) of each device from the the *body_dimensions* column
+
+
+3. Display size  
+    Extract the display size (diagonal) of the device in inches
+  
+
+4. Battery capacity  
+    Extract the battery capacity (in mili ampere hours, mAh)
+    
+
+5. Display resolution  
+    Extract the screen resolution as horizontal and vertical pixel counts, and save them in respective fields
+
+
+6. Price  
+    Separate the price amount and price currency into different variables
+    
+
+7. RAM  
+    Get the RAM from *memory_internal* field and convert it into gigabytes of memory
+    
+
+8. Bluetooth version  
+    Get the version of bluetooth implemented in each device
+    
+
+9. Camera lense count  
+    Collpase the *main_camera* fields into a new column indication the count of main camera lense(s)
+    
+
+10. Year announced  
+    Obtain the year in which the device was first announced
+    
+    
+11. Screen-to-body Ratio  
+    Although GSMArena provides this metric for devices announced in the last few years, we’d prefer to obtain this number for all devices. It may be calculated based on the diagnoal screen size, the display resolution of the screen, and length and width of the phone. Simple use of Pythagoras' theorem yields the desired value.
+    
+    
+
+# Data Checking
+
+Our dataset consists of all sorts of devices including tablets and smartwatches. These were discovered using filters based on screen size, available cellular networks, and year of announcement. We know that the first modern smartwatch was announced in 2011^[https://en.wikipedia.org/wiki/Smartwatch#2010s]. Also, tablets usually tend to be over 7 inches in screen size^[https://en.wikipedia.org/wiki/Tablet_computer#Mini_tablet].
+
+### Removing smartwatches and tablet devices
+
+Since we are only concerned with smart (or dumb/feature) _phones_ we can filter for devices that match certain criteria:
+
+- Remove devices with *No cellular connectivity*
+- Remove devices that have screens over 6.9 inches (predominantly tablets)
+- Remove devices that were announced after 2011 and have screens smaller than 1.7 inches (mostly smartwatches)
+
+    
+```{r wrangle_clean, echo=F, warning=F}
+
+
+
+gsm_df <- gsm %>% 
+  mutate(weight = str_extract(body_weight, "\\d+(.\\d+)?(?= g)") %>% as.numeric()) %>%
+  rowwise() %>%
+  mutate(tmp_dim = get_dimensions(body_dimensions)) %>%
+  separate(tmp_dim, into = c("dim_length", "dim_breadth", "dim_width"), sep = ",") %>%
+  mutate(display_size_inches = 
+           str_extract(display_size, ".*(?= inches)") %>% as.numeric()) %>%
+  mutate(display_tech = str_extract(display_type, "[A-Z\\s]{3,}") %>% str_trim(side = "both")) %>%
+  mutate(display_res =  str_extract(display_resolution, ".*x.*(?= pixel)") ) %>%
+  mutate(battery_cap = str_extract(battery, "\\d+(?= mAh)") %>% as.numeric()) %>%
+  rowwise() %>%
+  mutate(price = get_price(misc_price)) %>%
+  separate(price, into = c("price_amount", "price_currency"), sep = ",") %>%
+  mutate(price_amount = as.numeric(price_amount)) %>%
+  mutate(bluetooth_v = str_extract(comms_bluetooth, "\\d+(.\\d+)?") %>% as.numeric()) %>%
+  rowwise() %>%
+  mutate(ram_gb = get_ram(memory_internal), android_ver = get_android_version(platform_os)) %>%
+  mutate(cam = case_when(!is.na(main_camera_single) ~ "single",
+                         !is.na(main_camera_dual) ~ "dual",
+                         !is.na(main_camera_triple) ~ "triple",
+                         !is.na(main_camera_quad) ~ "quad",
+                         !is.na(main_camera_five) ~ "five",
+                         !is.na(main_camera_dual_or_triple) ~ "dual/triple",
+                         TRUE ~ "none"
+  )
+  ) %>% 
+  mutate(year = str_extract(launch_announced, "\\d{4}")) %>%
+  mutate(sensors = features_sensors %>% str_remove_all("\\(.*?\\)") %>% str_remove_all(" ")) %>%
+  select(oem, model, year, weight, dim_length, dim_breadth, dim_width, ram_gb, 
+         display_size_inches, display_tech, display_res, battery_cap,
+         price_amount, price_currency, android_ver, bluetooth_v, cam, sensors, sound_3.5mm_jack,
+         network_technology, platform_chipset
+  ) %>%
+  filter(display_size_inches < 6.9) %>% # remove tablet-sized devices
+  filter(network_technology != "No cellular connectivity") %>% # remove non-gsm devices
+  filter(!(display_size_inches < 1.7 & year > 2011)) %>% # remove smartwatches
+  separate(display_res, c("pixels_horz", "pixels_vert"), " x ", remove = F) %>%
+  mutate_at(.vars = c("pixels_horz", "pixels_vert", "dim_length", 
+                      "dim_breadth", "dim_width", "year"), .funs = as.numeric) %>%
+  rowwise() %>%
+  mutate(sbr = safe_sbr(display_res, dim_length, dim_breadth, display_size_inches)$result)
+  
+
+```
+
+
+```{r android_fix, echo = F}
+gsm_df <- gsm_df %>% rowwise() %>%
+  mutate(android_vers = fix_andr_v(android_ver))
+```
+
+
+# Exploration
+
+### Say No to Bezels
+
+Bezel-less display is one of the many buzz words surrounding the mobile phone industry these days. The term bezel refers to the portion of a device’s front surface that is not screen estate. Most mobile phones today look more or less the same with their ubiquitous rectangular profile and a display ingrained on the front. However this wasn’t always the case when companies were trying to innovate on the design and usability fronts. Some of the popular designs that have gone extinct are flip-phones, phones with slide-out or front-facing hardware keyboards, devices with track-balls, and phones resembling portable gaming consoles.
+
+
+```{r sbr, echo=F}
+
+gsm_df %>% filter(!is.na(year) & year > 2000) %>%
+  ggplot(aes(x = factor(year), sbr)) +
+  geom_boxplot() +
+  labs(title = "Screen-to-Body Ratio vs Year Announced ", x = "Year", y = "Ratio") +
+    theme(axis.text=element_text(size=10, angle = 90),
+          axis.title=element_text(size=12,face="bold"),
+          plot.title = element_text(size=16, face = "bold")
+          ) 
+
+```
+
+
+Notice how the rectangular boxes keep getting smaller in lenght as we move ahead the x-axis. This shift represents a homegenity in design which the industry seems to have embraced following in the footsteps of the first monolithic iPhone^[Citation Pending]. Outliers below the first quartile also witness a drop in number, signalling a decrease in feature-phone announcements as these are typically the devices that have both a display and hardware keypad, and thus a lower screen-body-ratio.
+
+
+
+
+```{r battery_weight, echo=F}
+gsm_df %>% filter(weight < 300 & battery_cap > 0 & year > 2002) %>%
+  ggplot(aes(x = battery_cap, y = weight)) +
+  geom_point(size = 0.2) +
+  facet_wrap(~year) 
+```
+
+
+
+### Part 5
+
+The first android device (according GSMArena's database) was released in the year 2008. It was T-Mobile's G1 running Android 1.6 (Donut). It probably marked the beginning of a new era for smartphone operating systems. Since then, Android has become wildly dominant and perhaps the only OS (apart from Apple's iOS) to survive in today's market. The likes of Symbian, Microsoft's Windows Mobile, BlackBerry OS, Palms OS, and Samsung's Bada OS have all become extinct now.
+
+We take a look at the ratio of Android and non-Android devices announced in different years:
+
+```{r android_dominance, echo = F}
+# gsm_df  %>% 
+#   filter(!is.na(year)) %>%
+#   mutate(is_android = ifelse(is.na(android_vers), "non-android", "android")) %>%
+#   select(is_android, year) %>%
+#   group_by(is_android, year) %>%  tally(name = "dev_count") %>%
+#   ggplot() +
+#   geom_bar(aes(x = factor(year), y = dev_count, fill = is_android), 
+#            position = "stack", stat = "identity") +
+#   theme(axis.text=element_text(size=10, angle = 90),
+#           axis.title=element_text(size=12,face="bold"),
+#           plot.title = element_text(size=16, face = "bold")
+#           ) +
+#   labs(title = "Number of Android and Non-Android Device launches",
+#        x = "year", y = "count of devices", fill = "is android?"
+#        )
+ 
+
+gsm_df  %>% 
+  filter(!is.na(year)) %>%
+  mutate(is_android = ifelse(is.na(android_vers), "non-android", "android")) %>%
+  select(is_android, year) %>%
+  group_by(is_android, year) %>%  tally(name = "dev_count") %>%
+  ungroup() %>% group_by(year) %>%
+  mutate(perc = dev_count/sum(dev_count)*100) %>%
+  ggplot() +
+  geom_bar(aes(x = factor(year), y = perc, fill = is_android), position = "stack", stat = "identity") +
+  annotate("segment", x = 9, y = 107, 
+           xend = 9, yend = 101, arrow = arrow()
+           ) +
+  geom_text(aes(label = "First Android phone", x = 9, y = 110)) +
+    labs(title = "% of Android and Non-Android Device launches",
+       x = "year", y = "percentage", fill = "is android?"
+       ) +
+    theme(axis.text=element_text(size=10, angle = 90),
+          axis.title=element_text(size=12,face="bold"),
+          plot.title = element_text(size=16, face = "bold"),
+          text = element_text(size = 8, face = "plain")
+          ) +
+  scale_y_continuous(breaks = c(0,25,50,75,100))
+```
+
+
+The above chart clearly displays the sort of dominance that Android has managed to gain in the smartphone market. In the last couple of years, 
+
+
+
+
+
+### Answer 4
+
+```{r, echo=F, message=F}
+
+
+adoption <- gsm_df %>% 
+  rowwise() %>%
+  mutate(has_fingerprint = str_detect(sensors, regex("fingerprint", ignore_case = T)),
+         multi_lens = case_when(cam %in% c("single", "none") ~ "no",
+                                TRUE ~ "yes"
+                                )
+         ) %>% 
+  select(year, has_fingerprint, multi_lens) %>%
+  group_by(year, has_fingerprint, multi_lens) %>%
+  tally(name = "device_count") %>%
+  filter(!is.na(year)) 
+
+multi_lens <- adoption %>%
+  select(year, multi_lens, device_count) %>%
+  ungroup()  %>% group_by(year) %>%
+  mutate(perc = device_count/sum(device_count)*100) %>%
+  ggplot() +
+  geom_bar(aes(x = factor(year), y = perc, fill = multi_lens), position = "stack", stat = "identity") +
+  scale_fill_manual(values = c("grey75", "olivedrab3")) +
+  labs(title = "% of Devices with Multiple Main Camera Lenses",
+       x = "year", y = "percentage", fill = "Multi Lens"
+  ) +
+  theme(axis.text=element_text(size=10, angle = 90),
+        axis.title=element_text(size=12,face="plain"),
+        plot.title = element_text(size=16, face = "bold"),
+        text = element_text(size = 10, face = "plain"),
+        legend.position = "bottom"
+  )
+  
+finger <- adoption %>%
+  select(year, has_fingerprint, device_count) %>%
+  ungroup()  %>% group_by(year) %>%
+  mutate(perc = device_count/sum(device_count)*100) %>%
+  ggplot() +
+  geom_bar(aes(x = factor(year), y = perc, fill = has_fingerprint), 
+           position = "stack", stat = "identity") +
+  scale_fill_manual(values = c("grey75", "olivedrab3")) +
+  labs(title = "% of Devices with Fingerprint Sensor",
+       x = "year", y = "percentage", fill = "fingerprint sensor"
+  ) +
+  theme(axis.text=element_text(size=10, angle = 90),
+        axis.title=element_text(size=12,face="plain"),
+        plot.title = element_text(size=16, face = "bold"),
+        text = element_text(size = 10, face = "plain"),
+        legend.position = "bottom"
+  )
+
+
+# library(ggpubr)
+# 
+# ggarrange(finger, multi_lens, ncol = 1, nrow = 2)
+
+```
+
+
+
+In terms of senosrs and features, mobile phones have become extremely versatile devices. What started as a device meant for serving the purpose of calling people remotely and sending text messages, has evolved into a feature-packed gadget that comes with camera(s) for photography, GPS for navigation, fingerprint readers for secure access, and accelerometers and gyro that help in motion sense gaming. A few mobile phones even come equipped with health-related sensors like heart-rate monitors, or are IP certified to be used in extereme conditions, such as underwater.
+
+Some of these features (or trends) have become more-or-less standardized and we will take look at two of them: multiple main camera lenses, and fingerprint readers
+
+
+```{r, echo=F, fig.height=4}
+finger
+```
+
+```{r, echo=F, fig.height=4}
+multi_lens
+```
+
+
+
+### Reflection
+
+capture device popularity, store errors/ devices not scraped
+
+
