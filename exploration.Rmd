@@ -18,6 +18,7 @@ library(stringr)
 library(tidyr)
 library(ggplot2)
 library(grid)
+library(igraph)
 ```
 
 
@@ -36,15 +37,27 @@ Over the years, GSMArena has compiled a rich database of mobile device specifica
 
 
 
-You can find the code used for scraping device specifications [here](https://github.com/cigarplug/scrape-gsma) on my GitHub. 
+You can find the code used for scraping device specifications and the generated raw data [here](https://github.com/cigarplug/scrape-gsma) on my GitHub. The exploration code and rmarkdown file are also included in above repository.
+
+
+The questions aimed to be answered at the end of this project are:
+
+1. Observe the trend in screen-to-body ratio of devices over the years
+2. Trends in battery capacity of devices vs overall weight of devices
+3. How the CPU chipmakers are related through OEMs / device manufacturers
+4. Trends in adoption of multiple camera lenses and fingerprint sensors
+5. Number of devices launched with each Android over the years
+
+
+This project has been entirely performed in the R (ver 3.5.3) programming language. 
 
 
 # Data Wrangling
 
-This project has been entirely performed in the R (ver 3.5.3) programming language. 
-We start off with reading the exported json file (created after data scrape-ing) and converting it into the familiar row-column structure. Each data frame element from the list is changed into the wide format. After this operation, each row represents specifications of one device.
 
-```{r read_data, warning=FALSE, cache=T}
+We start off with reading the exported json file (created after data scrape-ing) into R and converting it into R's bread and butter data.frame structure. Each data frame element from the list is changed into the wide format. After this operation, each row represents specifications of one device.
+
+```{r read_data, warning=FALSE, cache=T, echo=F}
 
 ll <- readLines("gsm.json") %>% fromJSON()
 
@@ -172,22 +185,18 @@ Next, we'll clean some of the data columns that we know will be required for ans
     
 
 7. RAM  
-    Get the RAM from *memory_internal* field and convert it into gigabytes of memory
+    Derive the RAM from *memory_internal* field and convert it into gigabytes of memory
     
 
-8. Bluetooth version  
-    Get the version of bluetooth implemented in each device
+8. Camera lense count  
+    Collpase the *main_camera* fields into a new column which indicates the count of main camera lense(s)
     
 
-9. Camera lense count  
-    Collpase the *main_camera* fields into a new column indication the count of main camera lense(s)
-    
-
-10. Year announced  
+9. Year announced  
     Obtain the year in which the device was first announced
     
     
-11. Screen-to-body Ratio  
+10. Screen-to-body Ratio  
     Although GSMArena provides this metric for devices announced in the last few years, we’d prefer to obtain this number for all devices. It may be calculated based on the diagnoal screen size, the display resolution of the screen, and length and width of the phone. Simple use of Pythagoras' theorem yields the desired value.
     
     
@@ -202,9 +211,17 @@ Since we are only concerned with smart (or dumb/feature) _phones_ we can filter 
 
 - Remove devices with *No cellular connectivity*
 - Remove devices that have screens over 6.9 inches (predominantly tablets)
-- Remove devices that were announced after 2011 and have screens smaller than 1.7 inches (mostly smartwatches)
+- Remove devices that were announced after 2011 and have screens smaller than 1.7 inches (mostly smartwatches)  
 
-    
+\leavevmode\newline
+
+
+### Fix Android version number
+
+We also notice that the android versions for some of the devices are stripped down to an integer value. For example, Android 4.0 is written as Android 4 for a small subset of the devices. For all such values, we can fix them by appending a *0* _(zero)_ if the version number is an integer
+
+
+
 ```{r wrangle_clean, echo=F, warning=F}
 
 
@@ -263,9 +280,13 @@ gsm_df <- gsm_df %>% rowwise() %>%
 
 # Exploration
 
+
+## Part 1
 ### Say No to Bezels
 
 Bezel-less display is one of the many buzz words surrounding the mobile phone industry these days. The term bezel refers to the portion of a device’s front surface that is not screen estate. Most mobile phones today look more or less the same with their ubiquitous rectangular profile and a display ingrained on the front. However this wasn’t always the case when companies were trying to innovate on the design and usability fronts. Some of the popular designs that have gone extinct are flip-phones, phones with slide-out or front-facing hardware keyboards, devices with track-balls, and phones resembling portable gaming consoles.
+
+\leavevmode\newline
 
 
 ```{r sbr, echo=F}
@@ -281,79 +302,121 @@ gsm_df %>% filter(!is.na(year) & year > 2000) %>%
 
 ```
 
+The boxplot depicts a general trend of increasing screen estate over the years. 
 
-Notice how the rectangular boxes keep getting smaller in lenght as we move ahead the x-axis. This shift represents a homegenity in design which the industry seems to have embraced following in the footsteps of the first monolithic iPhone^[Citation Pending]. Outliers below the first quartile also witness a drop in number, signalling a decrease in feature-phone announcements as these are typically the devices that have both a display and hardware keypad, and thus a lower screen-body-ratio.
+Notice how the rectangular boxes keep getting smaller in lenght as we move ahead the x-axis. This shift represents a homegenity in design which the industry seems to have embraced following in the footsteps of the first monolithic iPhone^[Citation Pending]. Outliers below the first quartile also witness a drop in number, signalling a decrease in feature-phone announcements, as these are typically the devices that have both a display and hardware keypad, and thus a lower screen-body-ratio.
 
 
 
+
+## Part 2
+
+### Heavier doesn't always imply higher battery capacity
+
+How long a phone can last on a single charge is an important choice factor for many people.  
+We explore the trends in battry capacity of devices and how it is affected by their overall weight.
 
 ```{r battery_weight, echo=F}
 gsm_df %>% filter(weight < 300 & battery_cap > 0 & year > 2002) %>%
-  ggplot(aes(x = battery_cap, y = weight)) +
+  ggplot(aes(y = weight, x = battery_cap)) +
   geom_point(size = 0.2) +
-  facet_wrap(~year) 
-```
-
-
-
-### Part 5
-
-The first android device (according GSMArena's database) was released in the year 2008. It was T-Mobile's G1 running Android 1.6 (Donut). It probably marked the beginning of a new era for smartphone operating systems. Since then, Android has become wildly dominant and perhaps the only OS (apart from Apple's iOS) to survive in today's market. The likes of Symbian, Microsoft's Windows Mobile, BlackBerry OS, Palms OS, and Samsung's Bada OS have all become extinct now.
-
-We take a look at the ratio of Android and non-Android devices announced in different years:
-
-```{r android_dominance, echo = F}
-# gsm_df  %>% 
-#   filter(!is.na(year)) %>%
-#   mutate(is_android = ifelse(is.na(android_vers), "non-android", "android")) %>%
-#   select(is_android, year) %>%
-#   group_by(is_android, year) %>%  tally(name = "dev_count") %>%
-#   ggplot() +
-#   geom_bar(aes(x = factor(year), y = dev_count, fill = is_android), 
-#            position = "stack", stat = "identity") +
-#   theme(axis.text=element_text(size=10, angle = 90),
-#           axis.title=element_text(size=12,face="bold"),
-#           plot.title = element_text(size=16, face = "bold")
-#           ) +
-#   labs(title = "Number of Android and Non-Android Device launches",
-#        x = "year", y = "count of devices", fill = "is android?"
-#        )
- 
-
-gsm_df  %>% 
-  filter(!is.na(year)) %>%
-  mutate(is_android = ifelse(is.na(android_vers), "non-android", "android")) %>%
-  select(is_android, year) %>%
-  group_by(is_android, year) %>%  tally(name = "dev_count") %>%
-  ungroup() %>% group_by(year) %>%
-  mutate(perc = dev_count/sum(dev_count)*100) %>%
-  ggplot() +
-  geom_bar(aes(x = factor(year), y = perc, fill = is_android), position = "stack", stat = "identity") +
-  annotate("segment", x = 9, y = 107, 
-           xend = 9, yend = 101, arrow = arrow()
-           ) +
-  geom_text(aes(label = "First Android phone", x = 9, y = 110)) +
-    labs(title = "% of Android and Non-Android Device launches",
-       x = "year", y = "percentage", fill = "is android?"
+  facet_wrap(~year) +
+  labs(title = "Trends in Weight vs Battery Capacity over the Years", x = "battery capacity (mAh)",
+       y= "Weight"
        ) +
-    theme(axis.text=element_text(size=10, angle = 90),
-          axis.title=element_text(size=12,face="bold"),
-          plot.title = element_text(size=16, face = "bold"),
-          text = element_text(size = 8, face = "plain")
-          ) +
-  scale_y_continuous(breaks = c(0,25,50,75,100))
+  geom_smooth(method = "loess")
+```
+
+In the above plot, a few trends stand out:
+
+- The battery capacity of devices was limited to 2000 mAh until the year 2010. 
+
+- In the earlier years - until 2012 - the weight of a device rose rapidly along with the battry capacity. That is to say, the icline of the model-fit is much steeper
+
+- From 2015 onwards, a major chunk of the devices habe battery capacities between 2000 and 4000 mAh
+
+- Nowadays, there is a much more gradual increase in weigh as the battery capacity rises
+
+- A majority of the devices weigh under 200 grams
+
+\leavevmode\newline
+\newline
+\newline
+
+## Part 3
+
+### SoC Provider Network
+
+In this section, we try to identify the relationship amongst mobile SoC (system-on-chip) manufacturers based on the their clients: viz the OEMs. While some OEMs are large enough to design their own CPUs (like Samsung and Apple), most other OEMs buy their CPU hardware from other companies. Notable major mobile SoC manufacturers are Qualcomm, Texas Instruments (TI) and Mediatek^[https://www.anandtech.com/show/8389/state-of-the-part-soc-manufacturers].
+
+```{r igraph, echo=F, include=F, eval=F}
+chips <- gsm_df  %>% filter(!is.na(platform_chipset) & oem != "Apple"
+                            ) %>% 
+  select(oem, platform_chipset) %>% 
+  mutate(chipset = word(platform_chipset) %>% tolower()) %>%
+  select(-platform_chipset) %>%
+  group_by(chipset, oem) %>% tally() %>%
+  filter(n > 10) 
+  
+m <- chips %>% spread( chipset, n, fill = 0) %>%
+  tibble::column_to_rownames("oem") %>%
+  as.matrix(.) 
+
+
+# m[m>1] <- 1
+
+links2 <- t(m)
+
+# net2 <- graph_from_incidence_matrix(links2)
+
+net2 <- graph_from_incidence_matrix(links2)
+
+
+lay = layout.reingold.tilford(net2)
+
+plt <- plot(net2, 
+     vertex.color=c("magenta","cyan")[V(net2)$type+1],
+     edge.width = E(net2)$weight,
+     edge.label=E(net2)$weight,
+     edge.label.cex=4,
+     vertex.label.color = "black",
+     vertex.size = 25,
+     vertex.label.cex = 1.5,
+     # vertex.label = NA,
+     # arrow.mode = 3,
+     layout=layout.fruchterman.reingold
+     )
+
+## used tkplot and took a screenshot, since it scaled better
+
+
+
+```
+
+```{r screenshot, echo=FALSE, fig.cap="OEM - SoC Provider Network", out.width = '100%'}
+# ![OEM - SoC Provider Network](~/www/scrape-gsma/igraph.png)
+knitr::include_graphics("~/www/scrape-gsma/igraph.png")
 ```
 
 
-The above chart clearly displays the sort of dominance that Android has managed to gain in the smartphone market. In the last couple of years, 
+
+The above graph (Figure 1) was generated using the [igraph](https://cran.r-project.org/package=igraph) R library.
+
+Here we see the relationship between SoC providers and OEMs: 
+
+- Exynos being Samsung's in-house brand is only (yet) used by Samsung itself
+
+- Asus is the only OEM to have ever used Intel chipsets
+
+- Mediatek and Qualcomm are the SoC providers for a majority of OEMs. While some OEMs source their chipsets from both of them, some are loyal to either of the two.
 
 
+\leavevmode\newline
+\newline
 
+## Part 4
 
-
-### Answer 4
-
-```{r, echo=F, message=F}
+```{r adoption, echo=F, message=F}
 
 
 adoption <- gsm_df %>% 
@@ -404,9 +467,6 @@ finger <- adoption %>%
   )
 
 
-# library(ggpubr)
-# 
-# ggarrange(finger, multi_lens, ncol = 1, nrow = 2)
 
 ```
 
@@ -417,19 +477,108 @@ In terms of senosrs and features, mobile phones have become extremely versatile 
 Some of these features (or trends) have become more-or-less standardized and we will take look at two of them: multiple main camera lenses, and fingerprint readers
 
 
-```{r, echo=F, fig.height=4}
+```{r fingerprint, echo=F, fig.height=4}
 finger
 ```
 
-```{r, echo=F, fig.height=4}
+
+While fingerprint sensors first appeared on mobile devices in the year 2006, they weren't particularly popular. The technology behind them wasn't much involved either. Adoption of fingerprint sensors started gaining momentum from the year 2014.  
+In 2016, almost half the devices had a fingerprint reader.
+In 2018 and 2019, over 75% mobile phones shipped with the sensor.
+
+
+
+```{r multi_lens, echo=F, fig.height=4}
 multi_lens
 ```
 
-![Caption for the picture.](~/www/scrape-gsma/igraph.png)
 
 
-### Reflection
-
-capture device popularity, store errors/ devices not scraped
+The momentum around multiple camera lenses witnesses a similar exponential growth: within 4 years of the first multi-camera setups being announced in 2015, nearly 75% devices boast of the feature in 2019. The benefits of multi-lens systems aren't particularly well laid-out, but that's just how the industry seems to operate. No OEM wants to feel left out of the trends.
 
 
+
+
+## Part 5
+
+The first android device (according GSMArena's database) was released in the year 2008. It was T-Mobile's G1 running Android 1.6 (Donut). It probably marked the beginning of a new era for smartphone operating systems. Since then, Android has become wildly dominant and perhaps the only OS (apart from Apple's iOS) to survive in today's market. The likes of Symbian, Microsoft's Windows Mobile, BlackBerry OS, Palms OS, and Samsung's Bada OS have all become extinct now.
+
+We take a look at the ratio of Android and non-Android devices announced in different years:
+
+```{r android_dominance, echo = F}
+# gsm_df  %>% 
+#   filter(!is.na(year)) %>%
+#   mutate(is_android = ifelse(is.na(android_vers), "non-android", "android")) %>%
+#   select(is_android, year) %>%
+#   group_by(is_android, year) %>%  tally(name = "dev_count") %>%
+#   ggplot() +
+#   geom_bar(aes(x = factor(year), y = dev_count, fill = is_android), 
+#            position = "stack", stat = "identity") +
+#   theme(axis.text=element_text(size=10, angle = 90),
+#           axis.title=element_text(size=12,face="bold"),
+#           plot.title = element_text(size=16, face = "bold")
+#           ) +
+#   labs(title = "Number of Android and Non-Android Device launches",
+#        x = "year", y = "count of devices", fill = "is android?"
+#        )
+ 
+
+gsm_df  %>% 
+  filter(!is.na(year)) %>%
+  mutate(is_android = ifelse(is.na(android_vers), "non-android", "android")) %>%
+  select(is_android, year) %>%
+  group_by(is_android, year) %>%  tally(name = "dev_count") %>%
+  ungroup() %>% group_by(year) %>%
+  mutate(perc = dev_count/sum(dev_count)*100) %>%
+  ggplot() +
+  geom_bar(aes(x = factor(year), y = perc, fill = is_android), position = "stack", stat = "identity") +
+  annotate("segment", x = 9, y = 107, 
+           xend = 9, yend = 101, arrow = arrow()
+           ) +
+  geom_text(aes(label = "First Android phone", x = 9, y = 110)) +
+    labs(title = "% of Android and Non-Android Device launches",
+       x = "year", y = "percentage", fill = "is android?"
+       ) +
+    theme(axis.text=element_text(size=10, angle = 90),
+          axis.title=element_text(size=12,face="bold"),
+          plot.title = element_text(size=16, face = "bold"),
+          text = element_text(size = 8, face = "plain")
+          ) +
+  scale_y_continuous(breaks = c(0,25,50,75,100))
+```
+
+
+The above chart clearly displays the sort of dominance that Android has managed to gain in the smartphone market. In the last few of years, an overwhelming majority of mobile phones were running Android. The other devices are either running iOS, or some community-driven/ enthusiast software such as the Kai OS.
+
+
+
+
+# Conclusion
+
+
+The questions proposed initially were tweaked slightly. This was done in order to allow for experimenting with more interesting plots (such as the SoC network graph) rather than the typical bars and lines. All the modified questions have been reasonably explored in this report.
+
+I learnt from this project that web-scraping is a challenging task, esp. when we're dealing with thousands of iterations over web pages. 
+
+I learnt that trend adoption happens very quickly in the mobile world - take fingerprint readers and multiple camera lenses for example. It must be acknowledged that Apple may not be the first to introduce a particular technology, but it has been the trend setter when it comes to touchscreens, fingerprint sensors, and notched displays.
+
+I also realized how dominant Android has become as a smartphone OS. The relationship between mobile SoC manufacturers is also worth pondering upon.
+
+Overall, the mobile device industry has come a long way in the roughly 2 decades of time that it has existed for. Trends are dropped as easily as they are adopted, and staying a pioneer is difficult. This is evident from Nokia's demise and re-surgence^[Note: Nokia's case wasn't explored in the report, but serves as an example]. 
+
+
+# Reflection
+
+While I managed to obtain the tabular-like data from the website, I could also have included more information, such as the device poplarity and number of page hits of each device. It would have allowed for some more interesting results involving only the most popular devices.
+
+The 93.5% success rate of scraping is nice to have but it would have been better to store the error logs for failed scraping instances. A majority of these errors, I suspect, were due to page encoding (or XML) related issues.
+
+The dataset itself is pretty huge, and deeper analysis was possible. Most of the exploration performed here is at an year (time) level. Other grouping variables such as OEMs could have been used. I also realized that the information about a device having notched display is not available in the GSMArena tables.
+
+
+
+# References
+
+1. Gsmarena.com. (2019). GSMArena.com - mobile phone reviews, news, specifications and more.... [online] Available at: https://www.gsmarena.com/
+
+2. Technocracy. (2019). Mobile Device Specifications from GSMArena. [online] Available at: http://cigarplug.ml/blog/mobile-device-specifications-from-gsmarena/ 
