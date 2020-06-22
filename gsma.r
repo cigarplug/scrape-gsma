@@ -13,9 +13,13 @@ library(purrr)
 library(jsonlite)
 library(stringr)
 
-# setwd("S2/viz/ass3/")
+setwd("git/scrape-gsma/")
 
 options(stringsAsFactors = F)
+
+if (file.exists("gsm.csv")){
+  gsm <- read.csv("gsm.csv")
+}
 
 
 build_oem_table <- function(...){
@@ -89,6 +93,7 @@ listed_devices <- function(page_url){
 }
 
 
+listed_devices("https://www.gsmarena.com/samsung-phones-f-9-0-p1.php")
 
 
 scrape_df <- function(url) {
@@ -133,97 +138,14 @@ scrape_df <- function(url) {
 
 safe_scraper <- safely(scrape_df, otherwise = NULL)
 
-get_os_type <- function(raw_df) {
-  if (nrow(raw_df[raw_df$sub_type == "OS",]) == 0) {
-    return (NA)
-  } else {
-    os_info <- raw_df %>% filter(sub_type == "OS") %>% select(val) %>% 
-      str_split(pattern = ",|;", simplify = T) %>% extract(1)
-    return(os_info)
-  }
-}
-
-get_camera <- function(raw_df) {
-  if (length(raw_df$val[raw_df$type %in% c("Main Camera", "Camera")]) == 0) {
-    return(NA)
-  } else if (raw_df$val[raw_df$type %in% c("Main Camera", "Camera")][1] %in% c("NO", "no", "No")) {
-    return (NA)
-  } else {
-    return(raw_df$sub_type[raw_df$type %in% c("Main Camera", "Camera")][1])
-  }
-}
 
 
 
-df_cols <- function(raw_df) {
-  
-  raw_df$sub_type <- str_trim(raw_df$sub_type, side = "both")
-  
-  dimensions <- strsplit(raw_df %>% filter(sub_type == "Dimensions") %>% select(val) %>% str_extract(".*mm") %>% gsub(" mm", "", .), split = " x ") %>%
-    unlist() %>% as.numeric()
-  
-  ram <- str_extract(raw_df$val[raw_df$sub_type == 'Internal'], "\\d+ (GB|MB) RAM") %>% paste(sep = " ", collapse = " ")
-  ram_gigabytes <- if(grepl("MB", ram, ignore.case = T)){
-    (str_extract(ram, "\\d+") %>% as.numeric())/1024
-  } else {
-    str_extract(ram, "\\d+") %>% as.numeric()
-  }
-  
-  weight <- raw_df$val[raw_df$sub_type == 'Weight'] %>% str_extract(".* g") %>% gsub(" g", "", .) %>% as.numeric()
-  
-  display_size_inches <- raw_df$val[raw_df$sub_type == 'Size'] %>% str_extract("(.*)inches") %>% gsub(" inches", " ", .) %>% as.numeric()
-  
-  display_tech <- raw_df$val[raw_df$sub_type == 'Type'] %>% str_extract(., "[A-Z\\s]{3,}") %>% str_trim(side = "both")
-  
-  display_res <- raw_df$val[raw_df$sub_type == "Resolution"] %>% str_extract(".*x.*pixel") %>% gsub(" pixel", "", .)
-  
-  os <- get_os_type(raw_df)
-  
-  battery_cap <- raw_df %>% filter(type == "Battery", sub_type == "") %>% 
-    select(val) %>% str_extract("\\d+(?= mAh)") %>% as.numeric()
-  
-  price <- safely(raw_df$val[raw_df$sub_type == "Price"], otherwise = NA)
-  price <- price()$result
-  
-  cam <- get_camera(raw_df)
-  
-  audio_jack <- raw_df$val[raw_df$sub_type == "3.5mm jack"]
-  
-  bt_v <- raw_df$val[raw_df$sub_type == "Bluetooth"] %>% str_extract("\\d+(.\\d+)?|No|NO|no") %>% as.numeric()
-  
-  sensors <- raw_df$val[raw_df$sub_type == "Sensors"]
-  
-  announcement <- raw_df$val[raw_df$sub_type == "Announced"]
-  
-  df <- data.frame(
-    announced = announcement,
-    dim_length = dimensions[1],
-    dim_breadth = dimensions[2],
-    dim_thickness = dimensions[3],
-    ram_gb = ram_gigabytes,
-    weight = weight,
-    display_size_inches = display_size_inches,
-    display_tech = display_tech,
-    display_res = display_res,
-    os = os,
-    battery_cap = battery_cap,
-    price = price,
-    camera_type = cam,
-    audio_jack = audio_jack,
-    bluetooth_v = bt_v,
-    sensors = sensors
-  )
-  df
-}
-
-
-
-
-gsm_cols <- c('oem_name', 'device_name', 'announced', 'dim_length','dim_breadth','dim_thickness','ram_gb','weight','display_size_inches','display_tech','display_res','os','battery_cap','price','camera_type','audio_jack','bluetooth_v','sensors')
-init_df <- matrix(data = NA, ncol = 18) %>% as.data.frame() %>% `colnames<-`(gsm_cols)
+# gsm_cols <- c('oem_name', 'device_name', 'announced', 'dim_length','dim_breadth','dim_thickness','ram_gb','weight','display_size_inches','display_tech','display_res','os','battery_cap','price','camera_type','audio_jack','bluetooth_v','sensors')
+# init_df <- matrix(data = NA, ncol = 18) %>% as.data.frame() %>% `colnames<-`(gsm_cols)
 ll <- list(devices = list())
 
-safe_df_cols <- safely(df_cols, otherwise = init_df)
+# safe_df_cols <- safely(df_cols, otherwise = init_df)
 
 
 
@@ -231,13 +153,22 @@ safe_df_cols <- safely(df_cols, otherwise = init_df)
 loop_the_loop <- function(filter_for_assignment = F) {
   
 
-  print("building oem table...")
+  if (exists("oem_table")){
+    
+    print("oem table exists")
+    
+  } else {
+    
+    print("building oem table...")
+    
+    oem_table <- build_oem_table()
+    
+    print("oem table built!")
+    
+  }
   
-  oem_table <- build_oem_table()
   
-  print("oem table built!")
-  
-  for (oem in oem_table$maker[4:nrow(oem_table)] ){
+  for (oem in oem_table$maker[1:nrow(oem_table)] ){
     print(paste("processing OEM:", oem))
     
     oem_listings <- parse_resource_locator(oem_table$resource_location[oem_table$maker == oem]) %>% oem_urls()
@@ -251,42 +182,40 @@ loop_the_loop <- function(filter_for_assignment = F) {
       
       for (device in devices_on_page$device_name) {
         
-        print(paste("retrieving data for:", device))
-        
-        out = tryCatch(
-          {
-            gsm_data <- safe_scraper(devices_on_page %>% 
-                                    filter(device_name == device) %>%
-                                    select(device_resource) %>% parse_resource_locator()
-            )
-            
-            if(!is.null(gsm_data$result)){
+        if (device %in% gsm$model && oem %in% gsm$oem){
+          
+          print("device exists. skipping...")
+          
+        } else {
+          
+          print(paste("retrieving data for:", device))
+          
+          out = tryCatch(
+            {
+              gsm_data <- safe_scraper(devices_on_page %>% 
+                                         filter(device_name == device) %>%
+                                         select(device_resource) %>% parse_resource_locator()
+              )
               
-              gsm_data <- gsm_data$result
-              tmp_df <- data.frame(type = c("oem", "model"), sub_type = c("", ""), val = c(oem, device))
-              
-              gsm_data <- rbind(tmp_df, gsm_data)
-              
-              ll$devices[[oem]][[device]] <<- gsm_data
-              
-              writeLines(toJSON(ll), "gsm.json")
-              
-              if (isTRUE(filter_for_assignment)) {
-                processed_data <- safe_df_cols(gsm_data)$result
+              if(!is.null(gsm_data$result)){
                 
-                device_info <- data.frame(oem_name = oem, device_name = device)
+                gsm_data <- gsm_data$result
+                tmp_df <- data.frame(type = c("oem", "model"), sub_type = c("", ""), val = c(oem, device))
                 
-                init_df <<- bind_rows(init_df, cbind(device_info, processed_data))
+                gsm_data <- rbind(tmp_df, gsm_data)
                 
-                write.csv(init_df, "gsm.csv", na = "", row.names = F)
+                ll$devices[[oem]][[device]] <<- gsm_data
                 
-                message("success..! csv written to fs")
+                writeLines(toJSON(ll), "gsm.json")
+                
+                
               }
               
             }
- 
-          }
-        )
+          )
+        }
+        
+        
       }
     }
   }
@@ -299,7 +228,7 @@ gsm_df <- loop_the_loop()
 
 
 
-ll <- readLines("~/Downloads/gsm.json") %>% fromJSON()
+new_data_json <- readLines("gsm.json") %>% fromJSON()
 
 long_to_wide <- function(df){
   as.data.frame(t(df$val)) %>% 
@@ -307,12 +236,14 @@ long_to_wide <- function(df){
                    str_trim(side = "both"))
 }
 
-gsm <- ll$devices %>% flatten() %>% map(long_to_wide) %>% bind_rows()
+gsm_new_devices <- new_data_json$devices %>% purrr::flatten() %>% map(long_to_wide) %>% bind_rows()
 
 
 # remove trailing underscores from col names, replace spaces with underscores, lowercase col names
 
-colnames(gsm) <- colnames(gsm) %>% str_replace( "_\\Z", "") %>% 
+colnames(gsm_new_devices) <- colnames(gsm_new_devices) %>% str_replace( "_\\Z", "") %>% 
   str_replace_all(" ", "_") %>%  str_trim() %>% tolower()
 
-write.csv(gsm, "gsm.csv", na = "", row.names = F)
+df = bind_rows(gsm_new_devices, gsm)
+
+write.csv(df, "gsm.csv", na = "", row.names = F)

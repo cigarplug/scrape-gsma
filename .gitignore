@@ -2,6 +2,12 @@
 .Rhistory
 .Rapp.history
 
+# josn file (csv file is much smaller here)
+gsm.json
+
+# web pages
+*.php
+
 # Session Data files
 .RData
 
