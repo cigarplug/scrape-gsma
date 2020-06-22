@@ -93,15 +93,16 @@ listed_devices <- function(page_url){
 }
 
 
-listed_devices("https://www.gsmarena.com/samsung-phones-f-9-0-p1.php")
+# listed_devices("https://www.gsmarena.com/samsung-phones-f-9-0-p1.php")
 
 
 scrape_df <- function(url) {
   
   src <- read_html(url)
-  n_head <- src %>% html_nodes("th") %>% html_text() %>% length()
-  
   doc <- xml2::download_xml(url)
+  
+  # number of [sub]tables on page
+  n_head <- xml2::read_html("google_pixel_4_xl-9895.php") %>% html_nodes("th") %>% length()
   
   get_head_tbl <- function(head_indx) {
     
@@ -139,14 +140,7 @@ scrape_df <- function(url) {
 safe_scraper <- safely(scrape_df, otherwise = NULL)
 
 
-
-
-# gsm_cols <- c('oem_name', 'device_name', 'announced', 'dim_length','dim_breadth','dim_thickness','ram_gb','weight','display_size_inches','display_tech','display_res','os','battery_cap','price','camera_type','audio_jack','bluetooth_v','sensors')
-# init_df <- matrix(data = NA, ncol = 18) %>% as.data.frame() %>% `colnames<-`(gsm_cols)
 ll <- list(devices = list())
-
-# safe_df_cols <- safely(df_cols, otherwise = init_df)
-
 
 
 
@@ -220,11 +214,10 @@ loop_the_loop <- function(filter_for_assignment = F) {
     }
   }
   
-  return(ll)
 }
 
 
-gsm_df <- loop_the_loop()
+loop_the_loop()
 
 
 
@@ -244,6 +237,6 @@ gsm_new_devices <- new_data_json$devices %>% purrr::flatten() %>% map(long_to_wi
 colnames(gsm_new_devices) <- colnames(gsm_new_devices) %>% str_replace( "_\\Z", "") %>% 
   str_replace_all(" ", "_") %>%  str_trim() %>% tolower()
 
-df = bind_rows(gsm_new_devices, gsm)
+df <- bind_rows(gsm_new_devices, gsm)
 
 write.csv(df, "gsm.csv", na = "", row.names = F)
