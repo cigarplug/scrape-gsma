@@ -102,13 +102,13 @@ scrape_df <- function(url) {
   doc <- xml2::download_xml(url)
   
   # number of [sub]tables on page
-  n_head <- xml2::read_html("google_pixel_4_xl-9895.php") %>% html_nodes("th") %>% length()
+  n_head <- xml2::read_html(url) %>% html_nodes("th") %>% length()
   
   get_head_tbl <- function(head_indx) {
     
     out = tryCatch(
       {
-        suppressMessages(htmltab(doc, which = head_indx ) %>% 
+        suppressMessages(htmltab(doc, which = head_indx, rm_nodata_cols = F ) %>% 
                            as.data.frame() %>% 
                            rbind(colnames(.), .) %>% 
                            `colnames<-`(c("type", "sub_type", "val")))
@@ -144,7 +144,7 @@ ll <- list(devices = list())
 
 
 
-loop_the_loop <- function(filter_for_assignment = F) {
+loop_the_loop <- function() {
   
 
   if (exists("oem_table")){
@@ -155,7 +155,7 @@ loop_the_loop <- function(filter_for_assignment = F) {
     
     print("building oem table...")
     
-    oem_table <- build_oem_table()
+    oem_table <<- build_oem_table()
     
     print("oem table built!")
     
