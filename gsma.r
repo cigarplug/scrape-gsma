@@ -4,6 +4,11 @@
 
 ## scraping gsmarena website ##
 
+# proxy settings
+
+# Sys.setenv(http_proxy = "socks5://localhost:8888")
+# Sys.setenv(HTTPS_PROXY = "socks5://localhost:8888")
+
 
 library(rvest)
 library(dplyr)
@@ -146,7 +151,7 @@ ll <- list(devices = list())
 
 loop_the_loop <- function() {
   
-
+  
   if (exists("oem_table")){
     
     print("oem table exists")
@@ -236,6 +241,11 @@ gsm_new_devices <- new_data_json$devices %>% purrr::flatten() %>% map(long_to_wi
 
 colnames(gsm_new_devices) <- colnames(gsm_new_devices) %>% str_replace( "_\\Z", "") %>% 
   str_replace_all(" ", "_") %>%  str_trim() %>% tolower()
+
+colnames(gsm_new_devices) <- colnames(gsm_new_devices) %>% str_replace( "_na", "") %>% 
+  str_replace( "\\.\\.\\.[0-9]+", "")
+
+
 
 df <- bind_rows(gsm_new_devices, gsm)
 
