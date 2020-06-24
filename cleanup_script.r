@@ -1,6 +1,8 @@
-gsmu <- read.csv("~/git/gsm.csv")
+gsm <- read.csv("~/Downloads/8393_390606_bundle_archive/gsm.csv")
+gsmu <- read.csv("~/git/scrape-gsma/gsm.csv")
 
 gsmu[gsmu==""]<-NA
+gsm[gsm==""]<-NA
 
 
 # 
@@ -57,7 +59,7 @@ df <- clean_cols(gsmu, "network")
 df <- clean_cols(df, "battery_talk_time")
 df <- clean_cols(df, "battery_stand.by")
 
-setdiff(colnames(df), colnames(gsm))
+setdiff(  colnames(gsmu), colnames(gsm))
 
 
 df %>% 
@@ -95,6 +97,12 @@ camera <- do.call(coalesce,
 df$camera_v1 <- NULL
 df$camera_v2 <- NULL
 df$camera <- camera
+
+
+
+tmp <- gsm %>% 
+  filter(!is.na(selfie_camera) & !is.na(selfie_camera_v1)) %>%
+  select(selfie_camera, selfie_camera_v1)
 
 
 selfie <- do.call(coalesce, 

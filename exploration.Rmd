@@ -55,19 +55,12 @@ This project has been entirely performed in the R (ver 3.5.3) programming langua
 # Data Wrangling
 
 
-We start off with reading the exported json file (created after data scrape-ing) into R and converting it into R's bread and butter data.frame structure. Each data frame element from the list is changed into the wide format. After this operation, each row represents specifications of one device.
+We start off with reading the exported csv file (created after data scrape-ing) into R and converting it into R's bread and butter data.frame structure. Each data frame element from the list is changed into the wide format. After this operation, each row represents specifications of one device.
 
 ```{r read_data, warning=FALSE, cache=T, echo=F}
 
-ll <- readLines("gsm.json") %>% fromJSON()
-
-long_to_wide <- function(df){
-  as.data.frame(t(df$val)) %>% 
-    `colnames<-`(paste0(df$type, "_", df$sub_type) %>% 
-                   str_trim(side = "both"))
-}
-
-gsm <- ll$devices %>% flatten() %>% map_df(long_to_wide) 
+gsm <- read.csv("gsm.csv")
+gsm[gsm == ""] <- NA
 
 ```
 
